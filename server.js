@@ -33,9 +33,12 @@ app.post('/saveAnswers', (req, res) => {
 
     // Guardar las respuestas
     const insertPromises = answers.map(answer => {
-        const query = 'INSERT INTO quiz_answers (email, question, answer) VALUES (?, ?, ?)';
+        const query = `
+            INSERT INTO quiz_answers (email, question, answer)
+            VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE answer = ?`;
         return new Promise((resolve, reject) => {
-            db.query(query, [email, answer.question, answer.answer], (err, results) => {
+            db.query(query, [email, answer.question, answer.answer, answer.answer], (err, results) => {
                 if (err) return reject(err);
                 resolve(results);
             });
@@ -44,9 +47,12 @@ app.post('/saveAnswers', (req, res) => {
 
     // Guardar resultados por sección
     const sectionInsertPromises = Object.keys(sectionResults).map(category => {
-        const query = 'INSERT INTO section_results (email, category, total) VALUES (?, ?, ?)';
+        const query = `
+            INSERT INTO section_results (email, category, total)
+            VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE total = ?`;
         return new Promise((resolve, reject) => {
-            db.query(query, [email, category, sectionResults[category]], (err, results) => {
+            db.query(query, [email, category, sectionResults[category], sectionResults[category]], (err, results) => {
                 if (err) return reject(err);
                 resolve(results);
             });
