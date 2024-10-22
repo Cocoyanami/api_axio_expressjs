@@ -1,176 +1,176 @@
 const express = require('express');
 const mysql = require('mysql');
+const bodyParser = require('body-parser');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+const port = 3001;
 
+// Configura el middleware
+app.use(cors());
+app.use(bodyParser.json());
+
+// Configuración de la conexión a la base de datos
 const db = mysql.createConnection({
     host: 'localhost',
-    user: 'root',
-    password: '',
-    database: 'quiz_app'
+    user: 'root', 
+    password: '', 
+    database: 'quiz_app' // acceso a bd
 });
 
 // Conectar a la base de datos
 db.connect(err => {
     if (err) {
-        console.error('Error al conectar a la base de datos:', err);
-    } else {
-        console.log('Conectado a la base de datos');
+        console.error('Error conectando a la base de datos:', err);
+        return;
     }
+    console.log('Conectado a la base de datos MySQL.');
 });
 
-// Obtener todos los usuarios con sus respuestas y sumas por sección
-app.get('/users', (req, res) => {
-    const query = `
-        SELECT email, question_id, answer 
-        FROM user_quiz_data
-    `;
-    db.query(query, (err, results) => {
-        if (err) {
-            console.error('Error al obtener datos:', err);
-            res.status(500).json({ error: 'Error al obtener datos' });
-        } else {
-            const users = {};
+// Ruta para guardar respuestas y resultados por sección
+app.post('/saveAnswers', (req, res) => {
+    const { email, answers, sectionResults } = req.body;
 
-            results.forEach(row => {
-                if (!users[row.email]) {
-                    users[row.email] = {
-                        answers: [],
-                        totalSum: 0
-                    };
+    // Guardar las respuestas
+    const insertPromises = answers.map(answer => {
+        const query = 'INSERT INTO quiz_answers (email, question, answer) VALUES (?, ?, ?)';
+        return new Promise((resolve, reject) => {
+            db.query(query, [email, answer.question, answer.answer], (err, results) => {
+                if (err) return reject(err);
+                resolve(results);
+            });
+        });
+    });
+
+    // Guardar resultados por sección
+    const sectionInsertPromises = Object.keys(sectionResults).map(category => {
+        const query = 'INSERT INTO section_results (email, category, total) VALUES (?, ?, ?)';
+        return new Promise((resolve, reject) => {
+            db.query(query, [email, category, sectionResults[category]], (err, results) => {
+                if (err) return reject(err);
+                resolve(results);
+            });
+        });
+    });
+
+    // Esperar a que se completen ambas inserciones
+    Promise.all([...insertPromises, ...sectionInsertPromises])
+        .then(() => res.json({ message: 'Respuestas y resultados guardados con éxito.' }))
+        .catch(err => res.status(500).json({ error: 'Error al guardar respuestas o resultados.' }));
+});
+
+// Obtener todas las respuestas de usuarios y la suma total por sección
+app.get('/allUsersWithAnswers', (req, res) => {
+    const queryAnswers = 'SELECT email, question, answer FROM quiz_answers';
+    const querySections = 'SELECT email, category, SUM(total) as total FROM section_results GROUP BY email, category';
+
+    // Ejecutar la consulta para obtener las respuestas
+    db.query(queryAnswers, (err, answersResults) => {
+        if (err) return res.status(500).json({ error: 'Error al recuperar las respuestas de usuarios.' });
+
+        // Ejecutar la consulta para obtener las sumas por sección
+        db.query(querySections, (err, sectionResults) => {
+            if (err) return res.status(500).json({ error: 'Error al recuperar los resultados por sección.' });
+
+            // Agrupar respuestas por usuario
+            const userAnswers = answersResults.reduce((acc, row) => {
+                const { email, question, answer } = row;
+
+                if (!acc[email]) {
+                    acc[email] = { answers: [], sectionTotals: {} };
                 }
-                users[row.email].answers.push({
-                    question_id: row.question_id,
-                    answer: row.answer
-                });
-                users[row.email].totalSum += row.answer;
+                acc[email].answers.push({ question, answer });
+                return acc;
+            }, {});
+
+            // Agrupar resultados por sección
+            sectionResults.forEach(row => {
+                const { email, category, total } = row;
+
+                if (!userAnswers[email]) {
+                    userAnswers[email] = { answers: [], sectionTotals: {} };
+                }
+                userAnswers[email].sectionTotals[category] = total;
             });
 
-            res.json(users);
-        }
+            res.json(userAnswers);
+        });
     });
 });
 
-// Guardar respuestas de un usuario
-app.post('/saveAnswers', (req, res) => {
-    const { email, answers } = req.body;
-    const query = 'INSERT INTO user_quiz_data (email, question_id, answer) VALUES ?';
-
-    const values = answers.map(answer => [email, answer.question, answer.answer]);
-
-    db.query(query, [values], (err, result) => {
-        if (err) {
-            console.error('Error al guardar respuestas:', err);
-            res.status(500).json({ error: 'Error al guardar respuestas' });
-        } else {
-            res.json({ message: 'Respuestas guardadas con éxito' });
-        }
-    });
-});
-
-// Eliminar todos los datos de un usuario
+// Ruta para eliminar todos los datos de un usuario
 app.delete('/deleteUserData/:email', (req, res) => {
     const email = req.params.email;
 
-    const deleteUserQuery = 'DELETE FROM user_quiz_data WHERE email = ?';
-    const deleteUserQuestionsQuery = 'DELETE FROM questions WHERE email = ?';
+    const deleteAnswersQuery = 'DELETE FROM quiz_answers WHERE email = ?';
+    const deleteSectionResultsQuery = 'DELETE FROM section_results WHERE email = ?';
 
-    db.query(deleteUserQuery, [email], (err, result) => {
-        if (err) {
-            console.error('Error al eliminar respuestas del usuario:', err);
-            res.status(500).json({ error: 'Error al eliminar respuestas del usuario' });
-            return;
-        }
+    // Eliminar respuestas del usuario
+    db.query(deleteAnswersQuery, [email], (err, results) => {
+        if (err) return res.status(500).json({ error: 'Error al eliminar respuestas del usuario.' });
 
-        db.query(deleteUserQuestionsQuery, [email], (err, result) => {
-            if (err) {
-                console.error('Error al eliminar preguntas del usuario:', err);
-                res.status(500).json({ error: 'Error al eliminar preguntas del usuario' });
-            } else {
-                res.json({ message: 'Datos del usuario eliminados con éxito' });
-            }
+        // Eliminar resultados por sección del usuario
+        db.query(deleteSectionResultsQuery, [email], (err, results) => {
+            if (err) return res.status(500).json({ error: 'Error al eliminar resultados por sección del usuario.' });
+
+            res.json({ message: 'Todos los datos del usuario han sido eliminados.' });
         });
     });
 });
 
-// Eliminar una pregunta y respuesta específica de un usuario
-app.delete('/deleteUserQuestion/:email/:questionId', (req, res) => {
-    const email = req.params.email;
-    const questionId = req.params.questionId;
+// Ruta para eliminar una respuesta específica de un usuario
+app.delete('/deleteAnswer', (req, res) => {
+    const { email, question } = req.body;
 
-    const deleteUserQuestionQuery = 'DELETE FROM user_quiz_data WHERE email = ? AND question_id = ?';
+    const query = 'DELETE FROM quiz_answers WHERE email = ? AND question = ?';
 
-    db.query(deleteUserQuestionQuery, [email, questionId], (err, result) => {
-        if (err) {
-            console.error('Error al eliminar pregunta del usuario:', err);
-            res.status(500).json({ error: 'Error al eliminar pregunta del usuario' });
-        } else {
-            res.json({ message: 'Pregunta y respuesta eliminadas con éxito' });
-        }
+    db.query(query, [email, question], (err, results) => {
+        if (err) return res.status(500).json({ error: 'Error al eliminar la respuesta.' });
+
+        res.json({ message: 'Respuesta eliminada con éxito.' });
     });
 });
 
-// Actualizar respuestas y preguntas de un usuario
-app.put('/updateUserData/:email', (req, res) => {
-    const email = req.params.email;
-    const { newEmail, newAnswers, newQuestions } = req.body;
+// Ruta para eliminar un resultado específico por sección de un usuario
+app.delete('/deleteSectionResult', (req, res) => {
+    const { email, category } = req.body;
 
-    const updateUserDataQuery = 'UPDATE user_quiz_data SET answer = ? WHERE email = ? AND question_id = ?';
-    const updateUserQuestionsQuery = 'UPDATE questions SET question = ? WHERE email = ? AND question_id = ?';
+    const query = 'DELETE FROM section_results WHERE email = ? AND category = ?';
 
-    // Actualizar respuestas
-    newAnswers.forEach(answerData => {
-        db.query(updateUserDataQuery, [answerData.answer, email, answerData.question_id], (err, result) => {
-            if (err) {
-                console.error('Error al actualizar respuestas del usuario:', err);
-                res.status(500).json({ error: 'Error al actualizar respuestas del usuario' });
-                return;
-            }
-        });
+    db.query(query, [email, category], (err, results) => {
+        if (err) return res.status(500).json({ error: 'Error al eliminar el resultado de sección.' });
+
+        res.json({ message: 'Resultado de sección eliminado con éxito.' });
     });
-
-    // Actualizar preguntas
-    if (newQuestions && newQuestions.length > 0) {
-        newQuestions.forEach(questionData => {
-            db.query(updateUserQuestionsQuery, [questionData.question, email, questionData.question_id], (err, result) => {
-                if (err) {
-                    console.error('Error al actualizar preguntas del usuario:', err);
-                    res.status(500).json({ error: 'Error al actualizar preguntas del usuario' });
-                    return;
-                }
-            });
-        });
-    }
-
-    // Actualizar email si se proporciona uno nuevo
-    if (newEmail) {
-        const updateEmailQuery = 'UPDATE user_quiz_data SET email = ? WHERE email = ?';
-        db.query(updateEmailQuery, [newEmail, email], (err, result) => {
-            if (err) {
-                console.error('Error al actualizar email del usuario:', err);
-                res.status(500).json({ error: 'Error al actualizar email del usuario' });
-                return;
-            }
-
-            const updateQuestionEmailQuery = 'UPDATE questions SET email = ? WHERE email = ?';
-            db.query(updateQuestionEmailQuery, [newEmail, email], (err, result) => {
-                if (err) {
-                    console.error('Error al actualizar email en preguntas:', err);
-                    res.status(500).json({ error: 'Error al actualizar email en preguntas' });
-                } else {
-                    res.json({ message: 'Datos del usuario y preguntas actualizados con éxito' });
-                }
-            });
-        });
-    } else {
-        res.json({ message: 'Datos del usuario y preguntas actualizados con éxito' });
-    }
 });
 
-const port = 3000;
+// Ruta para modificar una respuesta específica de un usuario
+app.put('/updateAnswer', (req, res) => {
+    const { email, question, newAnswer } = req.body;
+
+    const query = 'UPDATE quiz_answers SET answer = ? WHERE email = ? AND question = ?';
+
+    db.query(query, [newAnswer, email, question], (err, results) => {
+        if (err) return res.status(500).json({ error: 'Error al actualizar la respuesta.' });
+
+        res.json({ message: 'Respuesta actualizada con éxito.' });
+    });
+});
+
+// Ruta para modificar un resultado de sección de un usuario
+app.put('/updateSectionResult', (req, res) => {
+    const { email, category, newTotal } = req.body;
+
+    const query = 'UPDATE section_results SET total = ? WHERE email = ? AND category = ?';
+
+    db.query(query, [newTotal, email, category], (err, results) => {
+        if (err) return res.status(500).json({ error: 'Error al actualizar el resultado de sección.' });
+
+        res.json({ message: 'Resultado de sección actualizado con éxito.' });
+    });
+});
+
+// Iniciar el servidor
 app.listen(port, () => {
-    console.log(`Servidor ejecutándose en el puerto ${port}`);
+    console.log(`Servidor escuchando en http://localhost:${port}`);
 });
