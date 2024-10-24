@@ -1,30 +1,31 @@
 const express = require('express');
-const mysql = require('mysql');
+const mysql = require('mysql2');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-
+require('dotenv').config();
 const app = express();
 const port = 3001;
 
-// Configura el middleware
+// Configuración de middleware
 app.use(cors());
 app.use(bodyParser.json());
 
-// Configuración de la conexión a la base de datos
+// Configuración de la conexión a la base de datos MySQL
 const db = mysql.createConnection({
-    host: 'localhost',
-    user: 'root', 
-    password: '', 
-    database: 'quiz_app' // acceso a bd
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME
+
 });
 
 // Conectar a la base de datos
 db.connect(err => {
     if (err) {
-        console.error('Error conectando a la base de datos:', err);
+        console.error('Error al conectar a la base de datos:', err);
         return;
     }
-    console.log('Conectado a la base de datos MySQL.');
+    console.log('Conexión a MySQL exitosa');
 });
 
 // Ruta para guardar respuestas y resultados por sección
